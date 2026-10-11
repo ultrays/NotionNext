@@ -1,0 +1,493 @@
+{
+  "id": "aInewsPipeline2026x",
+  "name": "AI 资讯自动发布到 Notion",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "n1",
+      "name": "定时触发",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -680,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "NOTION_DATABASE_ID",
+              "value": "1e4e60cf-f006-8242-8d62-01076d32e957",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "MAX_ITEMS_PER_RUN",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "a3",
+              "name": "AI_BASE_URL",
+              "value": "https://api.deepseek.com",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "AI_MODEL",
+              "value": "deepseek-chat",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "CATEGORY",
+              "value": "AI 资讯",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "RSS_SOURCE_1",
+              "value": "https://www.jiqizhixin.com/rss",
+              "type": "string"
+            },
+            {
+              "id": "a7",
+              "name": "RSS_SOURCE_2",
+              "value": "https://techcrunch.com/category/artificial-intelligence/feed/",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n2",
+      "name": "配置",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -460,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('配置').first().json.RSS_SOURCE_1 }}",
+        "options": {}
+      },
+      "id": "n3",
+      "name": "RSS 机器之心",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 3,
+      "position": [
+        -180,
+        -220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "source",
+              "value": "机器之心",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n4",
+      "name": "标注来源1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        40,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('配置').first().json.RSS_SOURCE_2 }}",
+        "options": {}
+      },
+      "id": "n5",
+      "name": "RSS TechCrunch AI",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 3,
+      "position": [
+        -180,
+        80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b2",
+              "name": "source",
+              "value": "TechCrunch AI",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n6",
+      "name": "标注来源2",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        40,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      },
+      "id": "n7",
+      "name": "合并来源",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        280,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 汇总本次抓取结果：按链接去重、按时间倒序、截取前 N 条\nconst crypto = require('crypto');\nconst seen = new Set();\nconst items = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  const link = String(j.link || '').trim();\n  const title = String(j.title || '').trim();\n  if (!link || !title) continue; // 跳过报错或空条目\n  const key = link.split('?')[0];\n  if (seen.has(key)) continue;\n  seen.add(key);\n  const summary = String(j.contentSnippet || j.content || '')\n    .replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 1200);\n  items.push({\n    title, link, summary,\n    source: String(j.source || '未知来源'),\n    pubDate: j.isoDate || j.pubDate || new Date().toISOString(),\n    slug: 'ai-' + crypto.createHash('md5').update(key).digest('hex').slice(0, 10)\n  });\n}\nitems.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));\nconst max = $('配置').first().json.MAX_ITEMS_PER_RUN || 5;\nconst systemPrompt = '你是一位中文科技博客的资深编辑。请把用户给你的英文/中文 AI 资讯改写成一篇简体中文博客文章。要求：\\n' +\n  '1. 基于原文重新组织，不要逐句翻译，可补充背景说明；\\n' +\n  '2. 正文 300-600 字，可用 ## 小标题分节，不要出现 Markdown 代码块语法；\\n' +\n  '3. 只输出一个 JSON 对象，格式：{\"title\":\"中文标题，30字以内\",\"summary\":\"100字以内摘要\",\"tags\":[\"2-4个标签\"],\"markdown\":\"正文\"}\\n' +\n  '4. 不要输出 JSON 以外的任何内容。';\nconst userPrompt = c => '资讯标题：' + c.title + '\\n来源：' + c.source + '\\n链接：' + c.link + '\\n原文摘要：' + c.summary;\nreturn [{ json: { candidates: items.slice(0, max).map(c => ({ ...c, systemPrompt, userPrompt: userPrompt(c) })) } }];"
+      },
+      "id": "n8",
+      "name": "清洗与去重",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $('配置').first().json.NOTION_DATABASE_ID }}/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"filter\":{\"property\":\"slug\",\"rich_text\":{\"is_not_empty\":true}},\"page_size\":100}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "n9",
+      "name": "查询已有文章",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        -60
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 与 Notion 库中已有文章比对（slug 精确 + 标题归一化），跳过重复\nconst { candidates } = $('清洗与去重').first().json;\nconst results = $input.first().json?.results || [];\nconst norm = s => String(s || '').toLowerCase().replace(/[\\s\\p{P}]+/gu, '');\nconst slugs = new Set();\nconst titles = new Set();\nfor (const page of results) {\n  const props = page.properties || {};\n  for (const [k, v] of Object.entries(props)) {\n    const key = k.toLowerCase();\n    if (key === 'slug' && v.rich_text) slugs.add(v.rich_text.map(r => r.plain_text).join('').trim());\n    if (key === 'title' && v.title) titles.add(norm(v.title.map(r => r.plain_text).join('')));\n  }\n}\nreturn candidates\n  .filter(c => !slugs.has(c.slug) && !titles.has(norm(c.title)))\n  .map(c => ({ json: c }));"
+      },
+      "id": "n10",
+      "name": "过滤已存在",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('配置').first().json.AI_BASE_URL }}/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('配置').first().json.AI_MODEL, temperature: 0.7, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: $json.systemPrompt }, { role: 'user', content: $json.userPrompt } ] }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "n11",
+      "name": "AI 改写",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        -60
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 解析 AI 输出（容错：JSON 解析失败时用原文兜底），并构造 Notion 页面请求体\nconst cfg = $('配置').first().json;\nconst api = $input.first().json;\nconst cand = ($('过滤已存在').all()[$itemIndex] || {}).json || {};\nlet out = {};\nconst raw = String(api.choices?.[0]?.message?.content || '');\ntry {\n  out = JSON.parse(raw.replace(/^\\`\\`\\`(?:json)?/, '').replace(/\\`\\`\\`$/, '').trim());\n} catch (e) { out = {}; }\n\nconst title = String(out.title || cand.title || '未命名').slice(0, 60);\nconst summary = String(out.summary || cand.summary || '').slice(0, 180);\nconst tags = Array.isArray(out.tags) && out.tags.length\n  ? out.tags.map(t => String(t).slice(0, 20)).slice(0, 4) : ['AI'];\nconst md = (out.markdown && String(out.markdown).trim())\n  || (cand.summary || '正文生成失败，请查看原文：' + (cand.link || ''));\n\n// 简易 Markdown -> Notion blocks（标题/列表/段落）\nconst blocks = [];\nconst push = (type, txt) => blocks.push({\n  object: 'block', type,\n  [type]: { rich_text: [{ type: 'text', text: { content: txt } }] }\n});\nfor (const rawLine of md.split('\\n')) {\n  const t = rawLine.trim();\n  if (!t) continue;\n  if (t.startsWith('### ')) push('heading_3', t.slice(4));\n  else if (t.startsWith('## ')) push('heading_2', t.slice(3));\n  else if (t.startsWith('# ')) push('heading_1', t.slice(2));\n  else if (t.startsWith('- ') || t.startsWith('* ')) push('bulleted_list_item', t.slice(2));\n  else push('paragraph', t);\n  if (blocks.length >= 80) break;\n}\n\nconst notionBody = {\n  parent: { database_id: cfg.NOTION_DATABASE_ID },\n  properties: {\n    title: { title: [{ text: { content: title } }] },\n    status: { select: { name: 'Published' } },\n    type: { select: { name: 'Post' } },\n    summary: { rich_text: [{ text: { content: summary } }] },\n    date: { date: { start: new Date().toISOString().slice(0, 10) } },\n    category: { select: { name: cfg.CATEGORY } },\n    tags: { multi_select: tags.map(name => ({ name })) },\n    slug: { rich_text: [{ text: { content: cand.slug || slugFallback(cand.link || title) } }] }\n  },\n  children: blocks\n};\nfunction slugFallback(s) {\n  return 'ai-' + require('crypto').createHash('md5').update(s).digest('hex').slice(0, 10);\n}\nreturn [{ json: { notionBody, title, slug: notionBody.properties.slug.rich_text[0].text.content } }];"
+      },
+      "id": "n12",
+      "name": "解析并构造页面",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1420,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.notionBody) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "n13",
+      "name": "创建 Notion 页面",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1640,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 使用前配置（3 步）\n\n**1️⃣ 创建两个 Header Auth 凭证**（左侧 Credentials → New）：\n- 名称 `Notion API` → Header: `Authorization` / Value: `Bearer ntn_你的集成密钥`\n- 名称 `AI API` → Header: `Authorization` / Value: `Bearer sk-你的Key`（DeepSeek / OpenAI 等通用）\n\nNotion 集成密钥获取：notion.so/my-integrations 建集成 → 复制 Secret →\n在博客数据库页面右上角 ··· → Connections 添加该集成\n\n**2️⃣ 检查「配置」节点**：\n- NOTION_DATABASE_ID 已预填你的博客库\n- AI_BASE_URL / AI_MODEL 按你的服务商修改（默认 DeepSeek）\n- RSS 源可自行替换\n\n**3️⃣ 绑定凭证并激活**：\n- 打开「查询已有文章」「AI 改写」「创建 Notion 页面」三个 HTTP 节点，\n  在 Credential 处分别选择 Notion API / Notion API / AI API\n- Save → Execute Workflow 测试 → 右上角 Activate 启用定时",
+        "width": 500,
+        "height": 720,
+        "color": 4
+      },
+      "id": "s1",
+      "name": "使用说明",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1180,
+        -400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## NotionNext 属性约定\n\nstatus = `Published`（select）\ntype = `Post`（select）\nsummary / slug（rich_text）\ndate（date）· category（select）· tags（multi_select）\n\n⚠️ 若你库里的列名不同，\n去「解析并构造页面」节点修改对应字段名。",
+        "width": 380,
+        "height": 340,
+        "color": 6
+      },
+      "id": "s2",
+      "name": "Notion 属性约定",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        -340
+      ]
+    }
+  ],
+  "connections": {
+    "定时触发": {
+      "main": [
+        [
+          {
+            "node": "配置",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "配置": {
+      "main": [
+        [
+          {
+            "node": "RSS 机器之心",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS TechCrunch AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS 机器之心": {
+      "main": [
+        [
+          {
+            "node": "标注来源1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "标注来源1": {
+      "main": [
+        [
+          {
+            "node": "合并来源",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS TechCrunch AI": {
+      "main": [
+        [
+          {
+            "node": "标注来源2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "标注来源2": {
+      "main": [
+        [
+          {
+            "node": "合并来源",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "合并来源": {
+      "main": [
+        [
+          {
+            "node": "清洗与去重",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "清洗与去重": {
+      "main": [
+        [
+          {
+            "node": "查询已有文章",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查询已有文章": {
+      "main": [
+        [
+          {
+            "node": "过滤已存在",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "过滤已存在": {
+      "main": [
+        [
+          {
+            "node": "AI 改写",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI 改写": {
+      "main": [
+        [
+          {
+            "node": "解析并构造页面",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析并构造页面": {
+      "main": [
+        [
+          {
+            "node": "创建 Notion 页面",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
